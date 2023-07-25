@@ -1,0 +1,79 @@
+---
+name: deploy on aws ec2 backend
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend/**'
+      - '.github/workflows/docker.yml'
+env:
+  REGISTRY: ghcr.io
+jobs:
+  build: 
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: checkout the code
+        uses: actions/checkout@v2
+      - name: setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+      - name: Install dependencies
+        run: npm install
+      - name: build package
+        run: npm run build
+      - name: login gihub package
+        run: docker login ${{ env.REGISTRY }} -u ${{ secrets.REGISTRY_USERNAME }} --password ${{ secrets.REGISTRY_TOKEN }}
+      - name: create build image
+        run: docker build  -t ${{ env.REGISTRY }}/${{ secrets.REGISTRY_USERNAME }}/bc26-frontend:${{ github.sha }} .
+      - name: pushing image to github package
+        run: docker push ${{ env.REGISTRY }}/${{ secrets.REGISTRY_USERNAME }}/bc26-frontend:${{ github.sha }}
+  deploy: 
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    needs:
+      - build     
+    steps:  
+      - name: checkout the code
+        uses: actions/checkout@v2      
+      - name: Set up JDK 11
+        uses: actions/setup-java@v3
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+      - name: Build with Maven
+        run: mvn package -DskipTests 
+      - name: login gihub package
+        run: docker login ${{ env.REGISTRY }} -u ${{ secrets.REGISTRY_USERNAME }} --password ${{ secrets.REGISTRY_TOKEN }}
+      - name: create build image
+        run: docker build  -t ${{ env.REGISTRY }}/${{ secrets.REGISTRY_USERNAME }}/bc26-backend:${{ github.sha }} .
+      - name: pushing image to github package
+        run: docker push ${{ env.REGISTRY }}/${{ secrets.REGISTRY_USERNAME }}/bc26-backend:${{ github.sha }}
+
+      - name: ssh connect to ec2 server
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_KEY }}
+          REMOTE_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          echo "$SSH_PRIVATE_KEY" > ~/ssh_private_key
+          chmod 400 ~/ssh_private_key
+          ssh -i ~/ssh_private_key -o StrictHostKeyChecking=no ubuntu@$REMOTE_HOST '
+            
+            docker login ${{ env.REGISTRY }} -u ${{ secrets.REGISTRY_USERNAME }} --password ${{ secrets.REGISTRY_TOKEN }}
+            cd /home/ubuntu/bc26 &&
+            docker-compose down &&
+            docker-compose up -d
+            '
+
+          
+          
+
+    
+
